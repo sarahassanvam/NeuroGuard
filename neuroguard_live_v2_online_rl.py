@@ -1,5 +1,4 @@
 # neuroguard_live_v2_online_rl.py
-# ─────────────────────────────────────────────────────────────────────────────
 # VERSION 2  —  Online RL Adaptation
 #
 # Matches the rl_env.py reward structure exactly:
