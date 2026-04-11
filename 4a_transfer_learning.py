@@ -1,40 +1,3 @@
-# 4a_transfer_learning.py
-# ─────────────────────────────────────────────────────────────────────────────
-# FILTER — 100% identical to merge_original_dataset.py is_tcp_mqtt_port_df:
-#
-#   Training kept rows where:
-#       Protocol column == "TCP"    (Wireshark shows "TCP", NOT "MQTT")
-#       AND Info column contains \b1883\b or \b8883\b
-#
-#   What this means in practice:
-#       KEPT   → pure TCP control packets (SYN, ACK, FIN, RST, PSH/ACK)
-#                 whose Info field shows a port number of 1883 or 8883
-#                 e.g.  "44560 → 1883 [ACK] Seq=1 Ack=24 ..."
-#       DROPPED → MQTT application-layer packets (Wireshark Protocol = "MQTT")
-#                 e.g.  "Publish Message [hazards/flame_2]"
-#
-#   In scapy:
-#       A packet Wireshark calls "TCP"  has TCP layer but NO Raw payload that
-#       scapy can decode as MQTT (it is a bare TCP segment).
-#       A packet Wireshark calls "MQTT" has TCP layer AND a Raw/MQTT payload.
-#
-#   So the scapy filter is:
-#       pkt.haslayer(TCP)
-#       AND (sport or dport in {1883,8883})
-#       AND pkt[TCP].payload is empty  OR  it is not a known MQTT opcode
-#
-#   The simplest reliable way: check that TCP payload length == 0
-#   (pure ACK/SYN/FIN/RST) OR that the first byte of payload is NOT a valid
-#   MQTT fixed-header byte (MQTT opcodes: 0x10,0x20,0x30,0x40,0x50,0x60,
-#   0x70,0x80,0x90,0xA0,0xB0,0xC0,0xD0,0xE0,0xF0 — high nibble 1-15).
-#
-#   We use the strictest match: Wireshark shows "TCP" when the TCP segment
-#   carries NO application data (Len=0 in the Info) OR carries only a TCP
-#   timestamp/options payload.  The reliable heuristic is: if the packet
-#   has a non-empty Raw layer whose first byte's high nibble is 1-15, it is
-#   MQTT → EXCLUDE.  Otherwise → INCLUDE.
-# ─────────────────────────────────────────────────────────────────────────────
-
 import math
 import pickle
 import random
@@ -46,14 +9,11 @@ import torch.nn as nn
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-# ── PATHS ─────────────────────────────────────────────────────────────────────
 OUT_DIR   = Path(r"C:\Users\User\Documents\defender_data_tcp_fixed")
 PCAP_FILE = Path(r"C:\Users\User\Downloads\broker_data_transfer.csv")
-#OUT_DIR is where all the trained model files are saved from our earlier training scripts
+#OUT_DIR is where all my trained model files are saved from our earlier training scripts
 #PCAP_FILE is the new real hardware CSV we captured from our actual Raspberry Pi broker
 #this file contains real network traffic so we will use it to adapt our models to real conditions
-
-# ── HYPER-PARAMS ──────────────────────────────────────────────────────────────
 SEQ_LEN    = 20
 STEP       = 5
 FEAT_DIM   = 12
@@ -74,9 +34,6 @@ DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
 #EVAL_CHUNK = 512 means when we check accuracy we process 512 sequences at once
 #to avoid running out of memory
 #DEVICE will use the GPU if available otherwise it falls back to CPU
-
-
-# ── DETECTOR CONFIGS ──────────────────────────────────────────────────────────
 DETECTOR_CONFIGS = {
     "cnn_only": {
         "ckpt_in":    OUT_DIR / "detector_cnn_only.pt",
@@ -108,9 +65,6 @@ DETECTOR_CONFIGS = {
 #scaler_out is where we will save the new normalizer that is fit on real hardware traffic
 #we have three detectors: CNN only, CNN with Attention, and CNN with BiLSTM and Attention
 #all three will be fine-tuned using the same real hardware data
-
-# ── MODEL DEFINITIONS ─────────────────────────────────────────────────────────
-
 class MultiHeadAttention(nn.Module):
     def __init__(self, hidden_dim, num_heads=4):
         super().__init__()
@@ -133,7 +87,6 @@ class MultiHeadAttention(nn.Module):
         self.scale     = math.sqrt(self.head_dim)
         #we divide attention scores by the square root of head_dim to stop the scores from
         #getting too large which would make softmax output very sharp and kill gradients
-
     def forward(self, x):
         B, T, D = x.shape
         #B is batch size (how many sequences), T is time steps (20 packets), D is dimension (128)
@@ -154,7 +107,6 @@ class MultiHeadAttention(nn.Module):
         return self.out_proj(out).mean(dim=1)
         #out_proj mixes the head outputs together
         #mean(dim=1) collapses the time dimension so we get one vector per sequence
-
 
 class CNN_Only(nn.Module):
     def __init__(self, feat_dim=12, seq_len=20):
@@ -232,8 +184,6 @@ class CNN_BiLSTM_Attn(nn.Module):
         #h contains the BiLSTM output for every time step and _ is the hidden state we don't need
         return self.fc(self.multi_head_attn(h)).squeeze(1)
         #attention picks the most important time steps then fc gives the final score
-
-
 def build_model(model_type):
     if model_type == "cnn_only":
         return CNN_Only(feat_dim=FEAT_DIM, seq_len=SEQ_LEN)
@@ -247,18 +197,7 @@ def build_model(model_type):
 #it makes the code cleaner because we can just call build_model("cnn_only") instead of
 #writing a big if-else every time we need to create a model
 
-
-# ── FILTER HELPER ─────────────────────────────────────────────────────────────
-
 def is_tcp_mqtt_port_df(df: pd.DataFrame) -> pd.Series:
-    """
-    Exact same CSV filtering rule used in the original training pipeline
-    and now also used in 4b.
-
-    KEEP rows where:
-        Protocol == "TCP"
-        AND Info contains 1883 or 8883
-    """
     proto = df.get("Protocol", pd.Series([""] * len(df))).astype(str).str.upper()
     info = df.get("Info", pd.Series([""] * len(df))).astype(str).str.upper()
     #we use .get() with a default so if the column is missing the code won't crash
@@ -276,11 +215,6 @@ def is_tcp_mqtt_port_df(df: pd.DataFrame) -> pd.Series:
 
 
 def read_csv_features(csv_path: Path):
-    """
-    Read the real hardware CSV and extract the same 12 features used during
-    training, using the exact same filtering basis as merge_original_dataset.py
-    and 4b_rl_retrain_mixed.py.
-    """
     print(f"[INFO] Reading CSV: {csv_path}")
 
     try:
@@ -375,9 +309,6 @@ def read_csv_features(csv_path: Path):
     #return as a list of rows so each element is one packet's feature vector
     #this makes it easy to slide a window over them in build_sequences
 
-
-# ── BUILD SEQUENCES ───────────────────────────────────────────────────────────
-
 def build_sequences(feats, seq_len=SEQ_LEN, step=STEP):
     seqs = []
     for i in range(0, len(feats) - seq_len + 1, step):
@@ -391,9 +322,6 @@ def build_sequences(feats, seq_len=SEQ_LEN, step=STEP):
 #that happen at the boundary between two non-overlapping windows
 #all sequences from this real hardware capture are labeled 0 (normal) because
 #we captured this data from a healthy broker with no attacks happening
-
-
-# ── SCALER ────────────────────────────────────────────────────────────────────
 
 def refit_scaler(feats, scaler_out_path: Path):
     continuous = np.array([f[[0, 1, 2]] for f in feats], dtype=np.float32)
@@ -411,9 +339,6 @@ def refit_scaler(feats, scaler_out_path: Path):
 #we only scale the 3 continuous features (indices 0,1,2) because the flag features
 #(indices 3-11) are already binary (0 or 1) so they don't need normalization
 #pickle.dump saves the scaler to disk so the live deployment script can load and use it
-
-
-# ── FREEZE BACKBONE ───────────────────────────────────────────────────────────
 
 def freeze_backbone(model, model_type: str):
     for param in model.conv.parameters():
@@ -433,10 +358,6 @@ def freeze_backbone(model, model_type: str):
 #this prevents the model from forgetting what it learned (called catastrophic forgetting)
 #and it also means we need much less data to fine-tune because fewer parameters need updating
 #we print how many parameters are trainable vs frozen so we can verify the freeze worked
-
-
-# ── SCALE SEQUENCES ───────────────────────────────────────────────────────────
-
 def scale_sequences(seqs, scaler):
     continuous_idx = [0, 1, 2]
     scaled = []
@@ -453,9 +374,6 @@ def scale_sequences(seqs, scaler):
 #within each individual sequence (not globally across all sequences)
 #then we apply the new real-hardware scaler to normalize the continuous features
 #.copy() is important to avoid modifying the original sequence data
-
-
-# ── CHUNKED ACCURACY CHECK ────────────────────────────────────────────────────
 
 def chunked_normal_accuracy(model, X, chunk=EVAL_CHUNK):
     n_correct = 0
@@ -476,9 +394,6 @@ def chunked_normal_accuracy(model, X, chunk=EVAL_CHUNK):
 #if probability < 0.5 we predict normal (0) so we count it as correct since all hardware data is normal
 #del xb, preds frees the GPU/CPU memory after each chunk so we don't run out
 #we return accuracy as a fraction between 0 and 1 (so 0.95 means 95% correct)
-
-
-# ── FINE-TUNE ─────────────────────────────────────────────────────────────────
 
 def fine_tune_detector(model, seqs, scaler, epochs=FT_EPOCHS, lr=FT_LR, batch=FT_BATCH):
     print(f"  Scaling {len(seqs):,} sequences...")
@@ -532,10 +447,7 @@ def fine_tune_detector(model, seqs, scaler, epochs=FT_EPOCHS, lr=FT_LR, batch=FT
 
     model.eval()
     return model
-
-
-# ── MAIN ──────────────────────────────────────────────────────────────────────
-
+    
 def main():
     print("=" * 65)
     print("  NeuroGuard Transfer Learning - Real Hardware Fine-Tuning")
