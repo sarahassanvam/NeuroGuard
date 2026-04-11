@@ -1,24 +1,8 @@
-# 4b_rl_retrain_mixed.py
-# ─────────────────────────────────────────────────────────────────────────────
-# PURPOSE:
-#   Re-train the RL policy using:
-#     • 70 % experiences from your original dataset (attack + normal)
-#     • 30 % experiences from your real hardware normal traffic
-#
-#   This teaches the RL agent that hardware-style normal traffic should
-#   always get action=ALLOW, so it stops false-alarming on your sensors.
-#
-# WHAT CHANGES vs rl_train.py:
-#   • Uses the fine-tuned detector (_ft) and scaler (_ft) from step 4a.
-#   • Adds a HardwareNormalBuffer that replays label=0 sequences from
-#     your real capture inside the DQN experience replay.
-#   • Saves new RL files with suffix _ft so originals are untouched.
-#   • Everything else (QNet, Replay, DQN loop, CSV logging) is identical.
-#
-# RUN:
-#   python 4b_rl_retrain_mixed.py [--detector cnn_only|cnn_attn|cnn_bilstm_attn|all]
-# ─────────────────────────────────────────────────────────────────────────────
-
+#retrainining the RL policy using:
+#70 % experiences from your original dataset (attack + normal)
+#30 % experiences from your real hardware normal traffic
+#this teaches the RL agent that hardware-style normal traffic should
+#always get action=ALLOW, so it stops false-alarming on your sensors.
 import random
 import csv
 import math
@@ -36,8 +20,6 @@ from scapy.layers.inet import IP, TCP
 import pandas as pd
 from typing import Dict, List
 from sklearn.preprocessing import StandardScaler
-
-# ── CONSTANTS (copied from rl_env.py — do NOT change) ────────────────────────
 #these action IDs must exactly match rl_env.py
 #if they are different the reward function would punish the wrong actions
 
@@ -78,16 +60,12 @@ NON_MITIGATE_ACTIONS = {A_ALLOW, A_ALERT_ONLY, A_ESCALATE, A_DEESCALATE}
 #non-mitigate means the agent did not actually stop the attack
 #if attack traffic gets a non-mitigate action it counts as a miss (FN)
 
-
-# ── FEATURE COLUMNS (mirrors rl_env.py add_features output) ──────────────────
-
 FEATURE_COLS = [
     "Time", "time_delta", "Length",
     "has_mqtt_port",
     "flag_syn", "flag_ack", "flag_fin", "flag_rst", "flag_psh", "flag_urg",
     "to_mqtt", "from_mqtt",
 ]
-#the same 12 features used in training — order matters because models index by position
 _MQTT_PORTS = {1883, 8883}
 
 
@@ -101,11 +79,6 @@ def is_tcp_mqtt_port_df(df: pd.DataFrame) -> pd.Series:
 
 
 def _add_features_one_file(g: pd.DataFrame) -> np.ndarray:
-    """
-    Applies the same feature engineering as rl_env.add_features but for a
-    single file group (a small DataFrame), so no large index sort is needed.
-    Returns a float32 numpy array with columns matching FEATURE_COLS.
-    """
     g = g.copy()
     g["Time"]   = pd.to_numeric(g["Time"],   errors="coerce").fillna(0.0)
     g["Length"] = pd.to_numeric(g["Length"], errors="coerce").fillna(0.0)
@@ -135,8 +108,6 @@ def _add_features_one_file(g: pd.DataFrame) -> np.ndarray:
     #each row becomes one packet's feature vector
 
     return g[FEATURE_COLS].to_numpy(dtype=np.float32)
-# ── MEMORY-SAFE SEQUENCE BUILDERS (replace your current _df_to_sequences and build_rl_data_from_csv) ──
-
 def _iter_file_groups_from_split_csv(split_csv_path: Path, needed_cols: list[str], chunk_size: int = 200_000):
     """
     Stream one split CSV and yield one whole file at a time, without loading
@@ -235,10 +206,6 @@ def _split_csv_to_sequences(
         needed_cols: list[str],
         chunk_size: int = 200_000,
 ) -> tuple:
-    """
-    Builds sequences directly from one temporary split CSV in a streaming way.
-    This avoids both large concat() calls and large groupby() allocations.
-    """
     if not split_csv_path.exists():
         raise RuntimeError(f"No rows found for split '{split_name}'.")
 
@@ -408,9 +375,6 @@ def build_rl_data_from_csv(
         "test":  {"X": Xte, "y": yte, "files": fte},
         "feature_cols": {"cols": np.array(FEATURE_COLS, dtype=object)},
     }
-
-# ── NeuroGuardRLEnv (copied from rl_env.py — do NOT change) ──────────────────
-#the environment class is duplicated here so 4b is self-contained
 #it must be identical to rl_env.py or the reward signals will be wrong
 
 class _MultiHeadAttnEnv(nn.Module):
@@ -706,10 +670,8 @@ class NeuroGuardRLEnv:
             "is_heavy_action":bool(action in HEAVY_ACTIONS),
         }
         return next_state, float(reward), bool(done), info
-
-# ── PATHS ─────────────────────────────────────────────────────────────────────
 OUT_DIR   = Path(r"C:\Users\User\Documents\defender_data_tcp_fixed")
-PCAP_FILE = Path(r"C:\Users\User\Downloads\broker_data_transfer.csv")   # <-- real capture CSV
+PCAP_FILE = Path(r"C:\Users\User\Downloads\broker_data_transfer.csv")  
 #the same real hardware CSV from step 4a
 #we use it here to build the HardwareNormalBuffer for mixed training
 
@@ -718,7 +680,6 @@ TRAIN_IDX = OUT_DIR / "train_idx.npy"
 VAL_IDX   = OUT_DIR / "val_idx.npy"
 TEST_IDX  = OUT_DIR / "test_idx.npy"
 
-# ── FINE-TUNED MODEL CONFIGS (output of 4a_transfer_learning.py) ──────────────
 DETECTOR_CONFIGS = {
     "cnn_only": {
         "ckpt":   OUT_DIR / "detector_cnn_only_ft.pt",
@@ -738,8 +699,6 @@ DETECTOR_CONFIGS = {
         "type":   "cnn_bilstm_attn",
     },
 }
-
-# ── HYPER-PARAMS (identical to rl_train.py) ───────────────────────────────────
 DEVICE         = "cuda" if torch.cuda.is_available() else "cpu"
 SEQ_LEN        = 20
 STEP           = 5
@@ -787,7 +746,7 @@ MAX_FPR = 0.05
 MAX_FNR = 0.01
 MIN_TPR = 0.99
 MIN_TNR = 0.95
-#safety thresholds — a model is only "accepted" if it meets all four
+#safety thresholds same as before where a model is only "accepted" if it meets all four
 #FPR ≤ 5% means at most 5% of normal traffic is wrongly blocked
 #FNR ≤ 1% means at most 1% of attacks are missed (very strict)
 #TPR ≥ 99% means at least 99% of attacks are caught
@@ -804,9 +763,6 @@ HW_BATCH_FRAC  = 0.30   # 30 % hardware, 70 % dataset
 HW_ALLOW_REWARD = +1.5   # strong positive: this is definitely normal
 #when the agent replays a hardware normal experience and the action is ALLOW
 #it gets +1.5 reward — a strong signal that real hardware normal is safe
-
-
-# ── MODEL DEFINITIONS (exact copies — do NOT change) ─────────────────────────
 #these must be identical to rl_train.py and the other scripts
 #otherwise saved weights won't load correctly
 
@@ -879,9 +835,6 @@ class CNN_BiLSTM_Attn(nn.Module):
         h, _ = self.bilstm(self.conv(x.transpose(1, 2)).transpose(1, 2))
         return self.fc(self.multi_head_attn(h)).squeeze(1)
 
-
-# ── Q-NETWORK (identical to rl_train.py) ─────────────────────────────────────
-
 class QNet(nn.Module):
     def __init__(self, state_dim, n_actions):
         super().__init__()
@@ -895,9 +848,6 @@ class QNet(nn.Module):
         #the agent always picks the action with the highest Q-value
     def forward(self, x):
         return self.net(x)
-
-
-# ── REPLAY BUFFER (identical to rl_train.py) ──────────────────────────────────
 
 class Replay:
     def __init__(self, cap):
@@ -937,18 +887,7 @@ class Replay:
         #random sampling breaks the correlation between consecutive experiences
         #which makes training more stable
 
-
-# ── HARDWARE NORMAL BUFFER ────────────────────────────────────────────────────
-
 class HardwareNormalBuffer:
-    """
-    Reads real hardware pcap, builds state vectors for every normal sequence,
-    and stores (state, action=ALLOW, reward=HW_ALLOW_REWARD, next_state, done=0)
-    tuples so the DQN replay can sample from them.
-
-    We build a fake 'next state' by shifting the window by 1 sequence — good
-    enough for the RL to learn the ALLOW policy on this kind of traffic.
-    """
     #this buffer holds experiences generated entirely from real hardware normal traffic
     #each experience says: "in this real hardware state, the correct action is ALLOW"
     #by mixing these into every training batch we teach the agent to not block real sensors
@@ -958,7 +897,6 @@ class HardwareNormalBuffer:
         self.tuples    = []   # list of (s, a, r, ns, done) numpy arrays
         self._build(pcap_path, scaler, detector)
 
-    # ── feature extraction (mirrors live code exactly) ────────────────────────
     @staticmethod
     def _pkt_to_feat(pkt, prev_time):
         feat = np.zeros(FEAT_DIM, dtype=np.float32)
@@ -1122,10 +1060,6 @@ class HardwareNormalBuffer:
 
     def __len__(self):
         return len(self.tuples)
-
-
-# ── HELPER FUNCTIONS (identical to rl_train.py) ───────────────────────────────
-
 def eps_by_step(step):
     if step >= EPS_DECAY_STEPS:
         return EPS_END
@@ -1246,9 +1180,6 @@ def build_detector(model_type):
         return CNN_BiLSTM_Attn(feat_dim=FEAT_DIM, num_heads=4)
     raise ValueError(f"Unknown model type: {model_type}")
 
-
-# ── MAIN TRAINING FUNCTION ────────────────────────────────────────────────────
-
 def train_single_detector(detector_name, detector_config, data):
     print(f"\n{'='*80}")
     print(f"[INFO] Mixed RL re-training for detector: {detector_name}")
@@ -1258,7 +1189,6 @@ def train_single_detector(detector_name, detector_config, data):
     SCALER_CKPT   = detector_config["scaler"]
     DETECTOR_TYPE = detector_config["type"]
 
-    # output files — suffix _ft so originals are untouched
     RL_BEST1         = OUT_DIR / f"rl_dqn_preventer_best_{detector_name}_ft.pt"
     RL_BEST2         = OUT_DIR / f"rl_dqn_preventer_rank2_{detector_name}_ft.pt"
     RL_BEST3         = OUT_DIR / f"rl_dqn_preventer_rank3_{detector_name}_ft.pt"
@@ -1411,7 +1341,6 @@ def train_single_detector(detector_name, detector_config, data):
                     tq.load_state_dict(q.state_dict())
                     #every 1,000 steps sync the target network with the main network
 
-        # ── validation ────────────────────────────────────────────────────
         vm         = evaluate_greedy_true_metrics(val_env, q, episodes=VAL_EVAL_EPISODES, seed=VAL_SEED)
         eps_now    = eps_by_step(global_step)
         val_score  = (0.55 * vm["TPR"]) + (0.55 * vm["TNR"]) - (0.70 * vm["FPR"]) - (0.30 * vm["FNR"])
@@ -1484,9 +1413,6 @@ def train_single_detector(detector_name, detector_config, data):
         "best_accepted_ep":   best_accepted_ep,
     }
 
-
-# ── ENTRY POINT ───────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Mixed RL re-training with hardware normal data")
     parser.add_argument(
@@ -1539,4 +1465,4 @@ if __name__ == "__main__":
         print(f"\nBEST DETECTOR: {best['detector_name']}  score={best['best_overall_score']:.4f}")
 
     print("\n[INFO] Next step: copy the _ft model files to your Raspberry Pi model directory.")
-    #after this step the _ft RL policy files are ready to be copied to the Pi for deployment
+    #after this step the _ft RL policy files will be ready for deployment
