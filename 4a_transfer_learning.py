@@ -15,11 +15,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 )
-#importing all the libraries we need for:
-#loading data, building and fine-tuning the model and computing evaluation metrics
 
 OUT_DIR        = Path(r"C:\Users\User\Documents\defender_data_tcp_fixed")
-#the main folder that holds our dataset, split indices and saved model files
+#this  folder holds my dataset the split indixes and my saved model weights
 HW_NORMAL_CSV  = Path(r"C:\Users\User\Downloads\broker_data_transfer.csv")
 #path to the hardware normal traffic csv (real raspberry pi normal mqtt traffic)
 HW_ATTACK_CSV  = Path(r"C:\Users\User\Downloads\hping3_traffic.csv")
@@ -33,16 +31,16 @@ TEST_IDX  = OUT_DIR / "test_idx.npy"
 #these are the saved row numbers for train, val and test splits to avoid data leakage
 
 SEQ_LEN    = 20
-#each sample is a sliding window of 20 consecutive packets just like training
+#each sample is a sliding window of 20 consecutive packets just like my training
 STEP       = 5
 #we slide the window forward by 5 packets each time to create overlapping samples
 FEAT_DIM   = 12
 #each packet has 12 features: Time, time_delta, Length, has_mqtt_port, 6 tcp flags, to_mqtt, from_mqtt
 MQTT_PORTS = {1883, 8883}
-#the two standard mqtt ports that we filter on
+#we filter to the two standard mqtt ports
 
 FT_EPOCHS  = 10
-#we fine-tune for 10 epochs which is the same as the original training
+#we fine-tune for 10 epochs
 FT_LR      = 8e-5
 #lower learning rate than original training so we don't overwrite what the model already learned
 FT_BATCH   = 256
@@ -51,7 +49,7 @@ EVAL_BATCH = 512
 #how many sequences to process in one forward pass during evaluation (no gradient needed so we can go bigger)
 
 DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
-#use gpu if one is available otherwise fall back to cpu
+#use gpu if one is available otherwise we will use  cpu
 
 HW_NORMAL_FRAC   = 0.35
 #35% of the mixed training set comes from hardware normal traffic
