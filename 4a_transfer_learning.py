@@ -261,7 +261,7 @@ class FocalLoss(nn.Module):
     #focal loss focuses training on hard ambiguous examples near the decision boundary
     #this prevents the model from collapsing to always predicting one class when the mix contains both easy and hard samples
     def __init__(self, alpha: float = 0.5, gamma: float = 2.0):
-        #alpha=0.5 means equal weight for both classes so neither class dominates training
+        #alpha=0.5 means equal weight for both classes so neither class dominates training (for balancing)
         #gamma=2.0 means easy examples get quadratically down-weighted so the model focuses on hard ones
         super().__init__()
         self.alpha = alpha
@@ -520,6 +520,7 @@ def predict_probs(model: nn.Module, X: np.ndarray, batch_size: int = EVAL_BATCH)
         #go through the data in batches to avoid running out of memory on large inputs
         xb = torch.tensor(X[start:start + batch_size], dtype=torch.float32, device=DEVICE)
         #convert this batch to a torch tensor and move it to the right device
+        #the tensor is a PyTorch data structure for storing numbers in one or more dimensions.
         with torch.no_grad():
             p = torch.sigmoid(model(xb)).detach().cpu().numpy()
         #run the model without computing gradients and convert logits to probabilities
@@ -697,7 +698,7 @@ def prepare_mixed_data(scaler: StandardScaler):
     #how many sequences to take from the original normal pool
 
     idx_hw_n  = np.random.choice(len(X_hw_normal_s),   size=n_hw_normal,   replace=False)
-    #randomly select n_hw_normal indices from the hardware normal pool without replacement
+    #randomly select n_hw_normal indices from the hardware normal pool without replacement so once a sample is chosen, it cannot be chosen again.
     idx_hw_a  = np.random.choice(len(X_hw_attack_s),   size=n_hw_attack,   replace=False)
     #randomly select n_hw_attack indices from the hardware attack pool
     idx_oa    = np.random.choice(len(X_orig_attack_s),  size=n_orig_attack, replace=False)
@@ -725,7 +726,7 @@ def prepare_mixed_data(scaler: StandardScaler):
     X_mix = X_mix[perm]
     #shuffle the mixed sequences
     y_mix = y_mix[perm]
-    #shuffle the labels in the same order
+    #shuffle the labels in the same order, So each sample still keeps its correct label
 
     attack_pct = 100.0 * y_mix.sum() / len(y_mix)
     #compute what percentage of the final mixed set is labeled as attack
