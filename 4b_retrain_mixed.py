@@ -467,7 +467,7 @@ def _seq_to_state(seq_scaled: np.ndarray, det_p: float,
         float(prev_action)       / 15.0,
         #last action taken normalized to 0-1 so the agent knows what it just did
         float(escalation_level)  / 5.0,
-        #current escalation level normalized to 0-1 (5 is maximum escalation)
+        #current escalation level normalized to 0-1 (5 is maximum escalation) means how strong the current response has become
         float(fp_counter)        / 10.0,
         #false positive pressure normalized to 0-1 (grows when the agent blocks normal traffic)
         float(fn_counter)        / 10.0,
@@ -511,7 +511,7 @@ class HardwareNormalBuffer:
         df   = df.loc[_is_tcp_mqtt_port(df), required].copy()
         #filter to only tcp mqtt rows to match the training pipeline
         df   = df.sort_values("Time").reset_index(drop=True)
-        #sort by time to ensure chronological order
+        #sort by time to ensure order
         feats = _add_features(df)
         #build the 12-feature matrix for all packets
         print(f"[HW-NORMAL-BUFFER] {len(feats):,} packets after filtering")
@@ -541,7 +541,7 @@ class HardwareNormalBuffer:
         #start with no false negative pressure
 
         for idx in range(len(seqs) - 1):
-            #go through all windows except the last one because we need a next window for the next state
+            #go through all windows except the last one cuz for the last window, there is no window after it, so there is no next state.
             seq      = seqs[idx]
             #the current window of 20 packets
             next_seq = seqs[idx + 1]
@@ -1169,8 +1169,10 @@ def train_single_detector(detector_name, detector_config, data):
                 #compute huber loss between predicted and target q-values
                 opt.zero_grad()
                 #clear old gradients
+                #Gradients tell the model how to change its weights to reduce the error
                 loss.backward()
                 #compute gradients
+                #how each weight caused the error, so it knows what should change
                 opt.step()
                 #update the main network weights
 
