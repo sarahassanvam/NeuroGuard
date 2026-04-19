@@ -1,64 +1,42 @@
-# neuroguard_live_adaptive.py
-# ─────────────────────────────────────────────────────────────────────────────
-# NeuroGuard Live — Adaptive Real-Time Deployment
-#
-# This is the no-gate deployment extended with an ONLINE RL that continues
+# This is the no-gate deployment extended with an online RL that continues
 # learning from every single decision it makes in production.
-#
-# HOW TO RUN (Raspberry Pi 5):
-#   python neuroguard_live_adaptive.py --model cnn_only
-#   python neuroguard_live_adaptive.py --model cnn_attn
-#   python neuroguard_live_adaptive.py --model cnn_bilstm_attn
-#
-# ─── WHAT THE ONLINE RL ADDS ─────────────────────────────────────────────────
-#
-# The offline policy (loaded from rl_policy_best_ACCEPTED_*.pt) is a static
-# snapshot trained on the original dataset plus hardware captures.  It cannot
-# adapt to new attack patterns or traffic shifts that appear after training.
-#
-# The online RL layer wraps the offline policy and keeps learning:
-#   1.  Every new 20-packet window produces a (state, action, reward, next_state)
-#       transition that is pushed into a small live replay buffer.
-#   2.  After every ONLINE_LEARN_EVERY decisions, a mini-batch is sampled from
-#       that buffer and one gradient step is taken on the online Q-network.
-#   3.  The online Q-network starts as an exact copy of the loaded offline policy
-#       so it begins with all the knowledge that offline training produced.
-#   4.  A target network is updated every ONLINE_TARGET_UPDATE steps for stable
-#       Q-learning exactly as in rl_train.py.
-#   5.  Because there is no ground-truth label at inference time, the reward
-#       signal is derived from the detector probability and the action taken,
-#       using the exact same reward logic as rl_env.py step().
-#   6.  The online policy is saved to disk every ONLINE_SAVE_EVERY decisions so
-#       progress survives a restart.
-#
-# ─── REWARD SIGNAL (mirrors rl_env.py step() exactly) ────────────────────────
-#
+#i will write these commands to run the model
+#python neuroguard_live_adaptive.py --model cnn_only
+#python neuroguard_live_adaptive.py --model cnn_attn
+#python neuroguard_live_adaptive.py --model cnn_bilstm_attn
+#the rl here adds the following
+#The offline policy (loaded from rl_policy_best_ACCEPTED_*.pt) is a static
+#snapshot trained on the original dataset plus hardware captures.  It cannot
+#adapt to new attack patterns or traffic shifts that appear after training.
+#the online RL layer wraps the offline policy and keeps learning:
+#1.Every new 20-packet window produces a (state, action, reward, next_state)
+#that is pushed into a small live replay buffer
+#2.After every ONLINE_LEARN_EVERY decisions, a mini-batch is sampled from
+#that buffer and one gradient step is taken on the online Q-network.
+#3.The online Q-network starts as an exact copy of the loaded offline policy
+#so it begins with all the knowledge that offline training produced.
+#4.A target network is updated every ONLINE_TARGET_UPDATE steps for stable
+#Q-learning exactly as in rl_train.py.
 # The detector probability (det_p) is used as a proxy for y_true:
-#   det_p >= det_attack_thr  →  treat as attack  (y_true = 1)
-#   det_p <  det_attack_thr  →  treat as normal  (y_true = 0)
-#
-# Rewards (matching rl_env.py values):
-#   Normal traffic (det_p low):
-#     ALLOW             → +2.5   (correct: traffic is safe, pass it through)
-#     ALERT_ONLY / DEESCALATE → +0.8   (acceptable: advisory only, no disruption)
-#     any block action  → -2.0   (penalty: blocking normal = false positive)
-#     ESCALATE on normal→ -2.0   (extra penalty: don't escalate on safe traffic)
-#     det_p very low + not ALLOW → additional -1.0 (the detector is confident it's normal)
-#
-#   Attack traffic (det_p high):
-#     ALLOW             → -2.0   (penalty: letting an attack through = false negative)
-#     NON_MITIGATE      → -0.5   (smaller penalty: at least some response)
-#     real mitigation   → +1.5   (reward: attack correctly stopped)
-#     mitigation + detector agrees → extra +0.5 (bonus: consistent with detector)
-#     heavy action      → -0.1   (small cost: prefer lighter actions when possible)
-#
-#   Action cost (subtracted every step, matching rl_env.py action_costs):
-#     Penalises heavier actions to encourage the agent to prefer minimal responses
-#
-# ─── ALGORITHM: Double DQN with experience replay ────────────────────────────
-#
-# Double DQN was chosen because:
-#   - It directly matches the training algorithm used in rl_train.py so the
+#det_p >= det_attack_thr  →  treat as attack  (y_true = 1)
+#det_p <  det_attack_thr  →  treat as normal  (y_true = 0)
+#Rewards matching rl_env.py values:
+#Normal traffic (det_p low):
+#ALLOW             → +2.5   (correct: traffic is safe, pass it through)
+#ALERT_ONLY / DEESCALATE → +0.8   (acceptable: advisory only, no disruption)
+#any block action  → -2.0   (penalty: blocking normal = false positive)
+#ESCALATE on normal→ -2.0   (extra penalty: don't escalate on safe traffic)
+#det_p very low + not ALLOW → additional -1.0 (the detector is confident it's normal)
+#Attack traffic (det_p high):
+#ALLOW             → -2.0   (penalty: letting an attack through = false negative)
+#NON_MITIGATE      → -0.5   (smaller penalty: at least some response)
+#real mitigation   → +1.5   (reward: attack correctly stopped)
+#mitigation + detector agrees → extra +0.5 (bonus: consistent with detector)
+#heavy action      → -0.1   (small cost: prefer lighter actions when possible)
+#Action cost (subtracted every step, matching rl_env.py action_costs):
+#Penalises heavier actions to encourage the agent to prefer minimal responses
+#I chose Double DQN because:
+#   - It directly matches the training algorithm used in rl_train so the
 #     online updates are consistent with how the offline policy was learned.
 #   - It reduces overestimation bias (a known problem with vanilla DQN) by
 #     using the online net to select actions and the target net to evaluate them.
@@ -66,9 +44,6 @@
 #     without impacting the 6ms inference latency of the detector.
 #   - The small replay buffer (ONLINE_REPLAY_SIZE = 2000 transitions) keeps
 #     memory usage under 5MB which is appropriate for the Pi.
-#
-# ─────────────────────────────────────────────────────────────────────────────
-
 import argparse
 import collections
 import json
@@ -129,11 +104,8 @@ CONTINUOUS_IDX = [0, 1, 2]
 #column indices for the three continuous features (Time, time_delta, Length) that get scaled by StandardScaler
 #binary features in columns 3 to 11 are never scaled
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ONLINE RL HYPERPARAMETERS
 # These mirror rl_train.py as closely as possible while being lightweight
 # enough to run in real time on a Raspberry Pi 5 CPU.
-# ─────────────────────────────────────────────────────────────────────────────
 ONLINE_REPLAY_SIZE    = 2000
 #maximum number of transitions stored in the live replay buffer
 #2000 is large enough to break short-term correlations between consecutive windows
@@ -141,6 +113,7 @@ ONLINE_REPLAY_SIZE    = 2000
 ONLINE_BATCH_SIZE     = 32
 #number of transitions sampled per gradient update step
 #32 is smaller than the 256 used in rl_train.py to keep update time under 1ms on CPU
+#It means 32 transitions sampled from the replay buffer for one update step
 ONLINE_LEARN_EVERY    = 5
 #run one gradient update after every 5 new decisions
 #this matches the STEP=5 cadence so the policy is updated after every new window batch
@@ -152,6 +125,7 @@ ONLINE_LR             = 1e-4
 #smaller than the 3e-4 used in offline training to prevent catastrophic forgetting
 ONLINE_GAMMA          = 0.99
 #discount factor for future rewards: same as rl_train.py
+#It tells the RL agent how much it should care about future rewards, not just the immediate reward
 ONLINE_SAVE_EVERY     = 200
 #save the online-adapted policy to disk every 200 decisions
 #gives a checkpoint roughly every few minutes of live traffic
@@ -230,11 +204,6 @@ def bar(v, w=20):
     #medium threat levels are shown in yellow
     return f"{GREEN}{s}{RESET}"
     #low threat levels are shown in green
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MODEL DEFINITIONS  (identical to rl_env.py — do not change)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class MultiHeadAttention(nn.Module):
     #multi-head attention that focuses on the most important packets from multiple perspectives simultaneously
@@ -355,10 +324,6 @@ class QNet(nn.Module):
         #pass the 16-dimensional state through all three layers and return 16 q-values
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# FEATURE EXTRACTION  — exact replica of add_features() from rl_env.py
-# ─────────────────────────────────────────────────────────────────────────────
-
 _PORT_RE  = re.compile(r'(\d+)\s*[>→]\s*(\d+)')
 #pre-compiled regex to extract ports from both wireshark csv (→) and tshark output (>)
 _SYN_RE   = re.compile(r'\bSYN\b')
@@ -418,7 +383,7 @@ def extract_features_from_info(info_raw: str, length: float,
         rel_time,    #feature [0]: Time normalized to 0 at the first packet then growing in seconds
         time_delta,  #feature [1]: time difference from the previous packet (0 for the first)
         length,      #feature [2]: packet byte length
-        has_mqtt,    #feature [3]: 1 if any mqtt port is involved
+        has_mqtt,    #feature [3]: 1 if mqtt port is involved
         flag_syn,    #feature [4]: SYN flag
         flag_ack,    #feature [5]: ACK flag
         flag_fin,    #feature [6]: FIN flag
@@ -447,22 +412,23 @@ def scale_sequence(seq: np.ndarray, scaler) -> np.ndarray:
     #scale only Time, time_delta and Length columns (binary features in columns 3 to 11 are never scaled)
     return s
     #return the scaled sequence with the same shape as the input
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # ONLINE REPLAY BUFFER
 # Stores recent (state, action, reward, next_state, done) transitions so the
 # online Q-network can learn from them in random mini-batches.  Thread-safe
 # because the capture loop and training loop run in separate threads.
-# ─────────────────────────────────────────────────────────────────────────────
-
 class LiveReplayBuffer:
     #circular replay buffer that stores the most recent ONLINE_REPLAY_SIZE transitions
     def __init__(self, capacity: int):
         self._buf: Deque[Tuple] = collections.deque(maxlen=capacity)
         #a deque with a maximum length automatically drops the oldest entry when full
+        #A deque is a double-ended queue used to store recent items efficiently, 
+        #especially when we need to keep adding new data and removing old data in both directions
         self._lock = threading.Lock()
         #a lock to make push and sample thread-safe since both run in different threads
+        #one thread may be doing push add a new experience into the replay buffer
+        #another thread may be doing sample means take some experiences out of the replay buffer for training
+        #so this The lock is used to make replay-buffer operations thread-safe, 
+        #so adding new experiences and sampling experiences cannot happen at the same time in a conflicting way
 
     def push(self, state, action, reward, next_state, done):
         #this function adds one transition to the buffer
@@ -498,13 +464,10 @@ class LiveReplayBuffer:
         return len(self._buf)
         #return the current number of stored transitions
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # ONLINE RL REWARD FUNCTION
-# Mirrors rl_env.py step() reward logic exactly so the online updates are
+# Mirrors rl_env step() reward logic exactly so the online updates are
 # consistent with how the offline policy was trained.  The only difference is
-# that det_p is used as a proxy for y_true since we have no ground-truth label.
-# ─────────────────────────────────────────────────────────────────────────────
+# that det_p is used as a proxy for y_true since we have no ground-truth label
 
 def compute_live_reward(action: int, det_p: float, det_attack_thr: float) -> float:
     #this function computes the reward for one decision using the detector probability as a label proxy
@@ -549,11 +512,6 @@ def compute_live_reward(action: int, det_p: float, det_attack_thr: float) -> flo
     reward -= float(ACTION_COSTS.get(action, 0.0))
     #subtract the action's cost so the agent prefers proportionate responses matching rl_env.py
     return reward
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# LIVE STATE TRACKER  — mirrors rl_env.py internal state tracking exactly
-# ─────────────────────────────────────────────────────────────────────────────
 
 class LiveStateTracker:
     #this class tracks the rl agent's internal context (previous action, counters, escalation level) across decisions
@@ -621,10 +579,6 @@ class LiveStateTracker:
         self.prev_action = action
         #remember the action that was just taken for the next state vector
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# LIVE STATS
-# ─────────────────────────────────────────────────────────────────────────────
 
 class LiveStats:
     #this class collects and stores live statistics for the dashboard display in a thread-safe way
@@ -733,11 +687,6 @@ class LiveStats:
                 #current number of transitions in the live replay buffer
             )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DASHBOARD
-# ─────────────────────────────────────────────────────────────────────────────
-
 def render_dashboard(stats: dict, model_name: str, thr: float):
     #this function clears the terminal and prints a live dashboard of all key metrics
     os.system("clear")
@@ -815,12 +764,6 @@ def render_dashboard(stats: dict, model_name: str, thr: float):
           f"Uncertain={unc}")
     print(f"{'═'*W}")
     #show the breakdown of decision outcomes: confirmed attacks, normal and uncertain
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN CLASS
-# ─────────────────────────────────────────────────────────────────────────────
-
 class NeuroGuardAdaptive:
     #main class that loads all models and runs the adaptive real-time detection loop
 
@@ -872,7 +815,7 @@ class NeuroGuardAdaptive:
             self.scaler = pickle.load(f)
         #load the scaler that was fitted during fine-tuning for live feature normalization
 
-        # ── load detector (frozen — never updated online) ─────────────────
+        # load detector (frozen — never updated online) 
         for suffix in ("_ft2", "_ft"):
             cmap = {
                 "cnn_only":        f"detector_cnn_only{suffix}.pt",
@@ -901,7 +844,7 @@ class NeuroGuardAdaptive:
         #freeze all detector parameters — the detector is never updated online
         #only the RL policy adapts; the detector stays fixed
 
-        # ── load offline RL policy into the online Q-network ─────────────
+        # load offline RL policy into the online Q-network 
         for suffix in ("_ft2", "_ft"):
             rmap = {
                 "cnn_only":        f"rl_policy_best_ACCEPTED_cnn_only{suffix}.pt",
@@ -946,7 +889,7 @@ class NeuroGuardAdaptive:
         self.replay    = LiveReplayBuffer(ONLINE_REPLAY_SIZE)
         #the live replay buffer that stores recent transitions from production traffic
 
-        # ── runtime state ─────────────────────────────────────────────────
+        #runtime state 
         self.packet_buffer               = collections.deque(maxlen=SEQ_LEN)
         #a circular buffer that holds the last SEQ_LEN raw (unscaled) feature rows
         self.packets_since_last_decision = 0
@@ -977,8 +920,7 @@ class NeuroGuardAdaptive:
               f"learn_every={ONLINE_LEARN_EVERY} target_update={ONLINE_TARGET_UPDATE}")
         #confirm the system is ready and print the online RL configuration
 
-    # ── detector inference ────────────────────────────────────────────────────
-
+    # detector inference
     def _run_detector(self, seq_raw: np.ndarray) -> float:
         #this function scales the raw sequence and runs the detector to get an attack probability
         seq_scaled = scale_sequence(seq_raw, self.scaler)
@@ -989,7 +931,7 @@ class NeuroGuardAdaptive:
             return float(torch.sigmoid(self.detector(x)).item())
         #run the detector without computing gradients and convert the logit to a probability
 
-    # ── online RL action selection ────────────────────────────────────────────
+    # online RL action selection 
 
     def _select_action(self, state: np.ndarray) -> int:
         #this function picks the action with the highest q-value from the online network
@@ -1006,7 +948,7 @@ class NeuroGuardAdaptive:
             #switch back to train mode so online updates can proceed
         return action
 
-    # ── online Double DQN update ──────────────────────────────────────────────
+    #online Double DQN update
 
     def _online_update(self):
         #this function performs one Double DQN gradient step on the online Q-network
@@ -1023,10 +965,6 @@ class NeuroGuardAdaptive:
             self.q_net.train()
             #ensure we are in training mode for this update
 
-            # Double DQN: use online net to SELECT the best next action
-            # and target net to EVALUATE its Q-value
-            # This reduces overestimation bias compared to vanilla DQN
-            # and exactly matches the Double DQN logic in rl_train.py
             with torch.no_grad():
                 next_actions   = torch.argmax(self.q_net(next_states), dim=1, keepdim=True)
                 #online network selects the best action in the next state
@@ -1053,7 +991,7 @@ class NeuroGuardAdaptive:
         self.stats.record_online_update(len(self.replay))
         #record that one update happened and report the current replay buffer size
 
-    # ── target network update ─────────────────────────────────────────────────
+    #target network update 
 
     def _update_target_net(self):
         #this function copies the online Q-network weights into the target network
@@ -1061,7 +999,7 @@ class NeuroGuardAdaptive:
             self.target_net.load_state_dict(self.q_net.state_dict())
         #hard copy of all weights — matching TARGET_UPDATE logic in rl_train.py
 
-    # ── save adapted policy ───────────────────────────────────────────────────
+    #save adapted policy 
 
     def _save_adaptive_policy(self):
         #this function saves the current online Q-network weights to disk
@@ -1071,7 +1009,7 @@ class NeuroGuardAdaptive:
         print(f"[INFO] Adaptive policy saved → {self.adaptive_path.name}  "
               f"(decisions={self.decision_count})")
 
-    # ── main decision window ──────────────────────────────────────────────────
+    #main decision window
 
     def _process_window(self):
         #this function is called when SEQ_LEN packets are in the buffer and STEP new ones have arrived
@@ -1084,19 +1022,19 @@ class NeuroGuardAdaptive:
         #run the detector to get the attack probability for this 20-packet window
         seq_scaled = scale_sequence(seq_raw, self.scaler)
         #scale the raw sequence for the rl state builder
-        state      = self.state_tracker.build_state(seq_scaled, det_p)
+        state = self.state_tracker.build_state(seq_scaled, det_p)
         #build the 16-dimensional state vector from the scaled sequence and current agent context
-        action     = self._select_action(state)
+        action = self._select_action(state)
         #pick the best action from the online Q-network
-        ms         = (time.perf_counter() - t0) * 1000.0
+        ms = (time.perf_counter() - t0) * 1000.0
         #compute how long the full decision took in milliseconds
 
         reward = compute_live_reward(action, det_p, self.det_attack_thr)
         #compute the reward for this decision using the detector probability as a label proxy
 
-        # store a complete (s, a, r, s') transition in the replay buffer
-        # we use the current state as next_state for the previous transition
-        # (the state we just built is the 'next state' that followed the previous action)
+        #store a complete (s, a, r, s') transition in the replay buffer
+        #we use the current state as next_state for the previous transition
+        #(the state we just built is the 'next state' that followed the previous action)
         if self.prev_state is not None and self.prev_action is not None:
             self.replay.push(
                 self.prev_state,
@@ -1136,9 +1074,7 @@ class NeuroGuardAdaptive:
         #save this state so the next decision can form the (s, a, r, s') transition
         self.prev_action = action
         #save this action for the same reason
-
-    # ── packet ingestion ──────────────────────────────────────────────────────
-
+    #packet ingestion
     def _on_packet(self, ts: float, src_ip: str, info_raw: str, length: float):
         #this function processes one packet that has passed the tcp+mqtt-port filter
         self.stats.record_packet(src_ip)
@@ -1174,7 +1110,7 @@ class NeuroGuardAdaptive:
             self._process_window()
             #fire a decision: we have a full 20-packet window and at least 5 new packets since last time
 
-    # ── tshark line parser ────────────────────────────────────────────────────
+    #tshark line parser
 
     @staticmethod
     def parse_tshark_line(line: str) -> Optional[dict]:
@@ -1204,7 +1140,7 @@ class NeuroGuardAdaptive:
             return None
         #if any parsing step fails return None to skip this line silently
 
-    # ── dashboard thread ──────────────────────────────────────────────────────
+    #dashboard thread
 
     def _dashboard_thread(self):
         #this function runs in a background thread and refreshes the dashboard at DISPLAY_REFRESH intervals
@@ -1215,7 +1151,7 @@ class NeuroGuardAdaptive:
             time.sleep(DISPLAY_REFRESH)
             #wait before the next refresh
 
-    # ── main capture loop ─────────────────────────────────────────────────────
+    #main capture loop
 
     def run(self):
         #this function starts the dashboard thread and the main tshark capture loop
@@ -1325,11 +1261,7 @@ class NeuroGuardAdaptive:
               f"Avg reward: {s['avg_reward']:+.3f}")
         #show total packets, decisions made, gradient updates performed and average reward
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # ENTRY POINT
-# ─────────────────────────────────────────────────────────────────────────────
-
 def main():
     pa = argparse.ArgumentParser(description="NeuroGuard Adaptive — Online RL Deployment")
     pa.add_argument("--model", default="cnn_only",
